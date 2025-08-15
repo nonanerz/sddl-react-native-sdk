@@ -1,5 +1,5 @@
 {
-  "name": "@sddl/react-native-sdk",
+  "name": "sddl-react-native-sdk",
   "version": "0.2.7",
   "description": "React Native SDK for SDDL deferred deep links (no external deps)",
   "keywords": [
