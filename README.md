@@ -105,36 +105,29 @@ The SDK mirrors the native iOS/Android behavior:
 Minimal React component:
 
 ```tsx
-import React, { useEffect } from 'react';
-import { Linking } from 'react-native';
-import { Sddl } from 'sddl-react-native-sdk';
+import React, { useEffect, useState } from 'react';
+import { SafeAreaView, ScrollView, Text } from 'react-native';
+import { Sddl, type LinkData } from 'sddl-react-native-sdk';
 
 export default function App() {
+    const [out, setOut] = useState('Waiting for SDDL…');
+
     useEffect(() => {
-        // Runtime links (while app is open)
-        const sub = Linking.addEventListener('url', e => {
-            Sddl.resolve(e?.url, onSuccess, onError);
+        Sddl.init({
+            onSuccess: (data: LinkData) => setOut(JSON.stringify(data, null, 2)),
+            onError:   (msg: string)     => setOut(`ERR: ${msg}`),
         });
 
-        // Initial link or cold start (SDK handles 300ms delay internally)
-        Linking.getInitialURL().then(url => {
-            Sddl.resolve(url ?? undefined, onSuccess, onError);
-        });
-
-        return () => sub.remove();
+        return () => Sddl.dispose();
     }, []);
 
-    const onSuccess = (payload: Record<string, any>) => {
-        // Handle routing using payload
-        console.log('SDDL payload:', payload);
-    };
-
-    const onError = (msg: string) => {
-        // Optional non-blocking log
-        console.warn('SDDL error:', msg);
-    };
-
-    return null;
+    return (
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#0b0f1a' }}>
+            <ScrollView contentContainerStyle={{ padding: 16 }}>
+                <Text style={{ color: '#9fb0c3', fontSize: 12 }}>{out}</Text>
+            </ScrollView>
+        </SafeAreaView>
+    );
 }
 ```
 

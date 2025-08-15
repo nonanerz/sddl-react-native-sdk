@@ -1,4 +1,4 @@
-import { NativeModules, Platform } from 'react-native';
+import { NativeModules, Platform, Linking } from 'react-native';
 
 type JSONValue = string | number | boolean | null | JSONValue[] | { [k: string]: JSONValue };
 export type LinkData = Record<string, JSONValue>;
@@ -13,54 +13,55 @@ const UA   = 'SDDLSDK-ReactNative/1.0';
 let resolving = false;
 let ulArrived = false;
 let coldTimer: any = null;
+let linkSub: { remove(): void } | null = null;
 
 export const Sddl = {
-    async resolve(url?: string, onSuccess?: OnSuccess, onError: OnError = () => {}) {
-        if (!onSuccess) {
-            throw new Error('onSuccess callback is required');
-        }
+    async init(opts: { onSuccess: OnSuccess; onError?: OnError }) {
+        const { onSuccess, onError = () => {} } = opts;
 
-        if (url) {
+        linkSub?.remove();
+        linkSub = Linking.addEventListener('url', ({ url }) => {
             ulArrived = true;
+            cancelColdStart();
             if (!beginSingleFlight()) return;
-            await resolveFromUrl(url, onSuccess, onError);
-            return;
+            resolveFromUrl(url, onSuccess, onError);
+        });
+
+        try {
+            const initial = await Linking.getInitialURL();
+            if (initial) {
+                ulArrived = true;
+                cancelColdStart();
+                if (!beginSingleFlight()) return;
+                resolveFromUrl(initial, onSuccess, onError);
+                return;
+            }
+        } catch {
         }
 
         scheduleColdStart(onSuccess, onError);
     },
+
+    dispose() {
+        linkSub?.remove();
+        linkSub = null;
+        cancelColdStart();
+        resolving = false;
+    },
 };
 
-function parseUrlParts(u: string): { first: string | null; query: string | null } {
-    try {
-        const withoutHash = u.split('#')[0];
-        const qIdx = withoutHash.indexOf('?');
-        const pathPart = qIdx >= 0 ? withoutHash.slice(0, qIdx) : withoutHash;
-        const query = qIdx >= 0 ? withoutHash.slice(qIdx + 1) : null;
-
-        const pathOnly = pathPart.replace(/^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\/[^/]+/, '');
-        const first = (pathOnly.split('/').filter(Boolean)[0] || '').trim();
-
-        return { first: first || null, query };
-    } catch {
-        return { first: null, query: null };
-    }
-}
-
-
-// --- Orchestration ----------------------------------------------------------
+// --- orchestration ----------------------------------------------------------
 
 function scheduleColdStart(onSuccess: OnSuccess, onError: OnError) {
-    clearTimeout(coldTimer);
+    cancelColdStart();
     coldTimer = setTimeout(async () => {
         if (ulArrived || resolving) return;
         resolving = true;
-
         try {
             const clip = await safeReadClipboard();
             const key = isValidKey(clip) ? clip! : null;
             if (key) {
-                const ok = await getDetails(key, null, onSuccess, onError);
+                const ok = await getDetails(key, onSuccess, onError);
                 if (!ok) await getTryDetails(onSuccess, onError);
             } else {
                 await getTryDetails(onSuccess, onError);
@@ -71,17 +72,27 @@ function scheduleColdStart(onSuccess: OnSuccess, onError: OnError) {
     }, 300);
 }
 
-async function resolveFromUrl(
-    urlStr: string,
-    onSuccess: OnSuccess,
-    onError: OnError
-) {
-    try {
-        const { first, query } = parseUrlParts(urlStr);
-        const key = isValidKey(first) ? first : null;
+function cancelColdStart() {
+    if (coldTimer) {
+        clearTimeout(coldTimer);
+        coldTimer = null;
+    }
+}
 
+function parseKey(url: string): string | null {
+    const withoutHash = url.split('#')[0];
+    const qIdx = withoutHash.indexOf('?');
+    const pathPart = qIdx >= 0 ? withoutHash.slice(0, qIdx) : withoutHash;
+    const pathOnly = pathPart.replace(/^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\/[^/]+/, '');
+    const first = (pathOnly.split('/').filter(Boolean)[0] || '').trim();
+    return isValidKey(first) ? first : null;
+}
+
+async function resolveFromUrl(urlStr: string, onSuccess: OnSuccess, onError: OnError) {
+    try {
+        const key = parseKey(urlStr);
         if (key) {
-            const ok = await getDetails(key, query, onSuccess, onError);
+            const ok = await getDetails(key, onSuccess, onError);
             if (!ok) await getTryDetails(onSuccess, onError);
         } else {
             await getTryDetails(onSuccess, onError);
@@ -93,25 +104,19 @@ async function resolveFromUrl(
     }
 }
 
-// --- Networking -------------------------------------------------------------
+// --- networking -------------------------------------------------------------
 
 async function getDetails(
     key: string,
-    query: string | null,
     onSuccess: OnSuccess,
     onError: OnError
 ): Promise<boolean> {
-    const url = `${BASE}/${encodeURIComponent(key)}/details${query ? `?${query}` : ''}`;
-
+    const url = `${BASE}/${encodeURIComponent(key)}/details`;
     try {
         const resp = await fetch(url, { method: 'GET', headers: await commonHeaders() });
-        if (resp.status === 200) {
-            onSuccess(await safeJson(resp));
-            return true;
-        }
+        if (resp.status === 200) { onSuccess(await safeJson(resp)); return true; }
         if (resp.status === 404 || resp.status === 410) return false;
-        onError(`HTTP ${resp.status}`);
-        return false;
+        onError(`HTTP ${resp.status}`); return false;
     } catch (e: any) {
         onError(`Network error: ${String(e?.message || e)}`);
         return false;
@@ -121,32 +126,24 @@ async function getDetails(
 async function getTryDetails(onSuccess: OnSuccess, onError: OnError) {
     try {
         const resp = await fetch(`${BASE}/try/details`, { method: 'GET', headers: await commonHeaders() });
-        if (resp.status === 200) {
-            onSuccess(await safeJson(resp));
-        } else {
-            onError(`TRY ${resp.status}`);
-        }
+        if (resp.status === 200) onSuccess(await safeJson(resp));
+        else onError(`TRY ${resp.status}`);
     } catch (e: any) {
         onError(`try/details error: ${String(e?.message || e)}`);
     }
 }
 
-// --- Common headers & helpers ----------------------------------------------
+// --- headers & helpers ------------------------------------------------------
 
 async function commonHeaders(): Promise<Record<string, string>> {
     const h: Record<string, string> = {
         'User-Agent': UA,
         'X-Device-Platform': Platform.OS === 'ios' ? 'iOS' : 'Android',
     };
-
     try {
         const id: string | null = await SddlNative?.getAppIdentifier?.();
-        if (id && id.length) {
-            h['X-App-Identifier'] = id;
-        }
-    } catch { /* ignore */ }
-
-
+        if (id && id.length) h['X-App-Identifier'] = id;
+    } catch {}
     return h;
 }
 
@@ -157,7 +154,8 @@ function isValidKey(s?: string | null): s is string {
 async function safeReadClipboard(): Promise<string | null> {
     try {
         const s: string | null = await SddlNative?.readClipboard?.();
-        return (s || '').trim() || null;
+        const t = (s || '').trim();
+        return t.length ? t : null;
     } catch { return null; }
 }
 
@@ -166,11 +164,10 @@ function beginSingleFlight(): boolean {
     resolving = true;
     return true;
 }
+
 function finish() {
     resolving = false;
-    ulArrived = false;
-    clearTimeout(coldTimer);
-    coldTimer = null;
+    cancelColdStart();
 }
 
 async function safeJson(resp: Response) {
