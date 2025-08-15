@@ -107,7 +107,7 @@ Minimal React component:
 ```tsx
 import React, { useEffect } from 'react';
 import { Linking } from 'react-native';
-import { Sddl } from '@sddl/react-native-sdk';
+import { Sddl } from 'sddl-react-native-sdk';
 
 export default function App() {
     useEffect(() => {
