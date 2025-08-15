@@ -9,9 +9,9 @@ Official React Native SDK for SDDL. Handles **deferred deep links** end‑to‑e
 > Autolinking is supported. No extra native setup is required beyond the platform link capabilities below.
 
 ```bash
-# with npm	npm i @sddl/react-native-sdk
-# or yarn	yarn add @sddl/react-native-sdk
-# or pnpm	pnpm add @sddl/react-native-sdk
+# with npm	npm i sddl-react-native-sdk
+# or yarn	yarn add sddl-react-native-sdk
+# or pnpm	pnpm add sddl-react-native-sdk
 ```
 
 **iOS:**
